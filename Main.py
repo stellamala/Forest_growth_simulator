@@ -1,0 +1,205 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.colors import ListedColormap
+import matplotlib.patches as mpatches
+from scipy.ndimage import gaussian_filter
+from Objects import SPECIES_LIST
+
+# Configuration
+SIZE = 70 
+DAYS = 365
+WATER, EMPTY = -1, 0
+DROUGHT_DEATH_CHANCE = 0.2
+TREE_HEIGHT_SCALE = 0.08
+
+# --- 1. WORLD GENERATION ---
+def generate_world(size):
+    # 1. Base Elevation
+    noise = np.random.rand(size, size)
+    elevation = gaussian_filter(noise, sigma=5)
+    elevation = (elevation - elevation.min()) / (elevation.max() - elevation.min())
+    
+    # 2. Natural Steepness (from slope)
+    dy, dx = np.gradient(elevation)
+    base_steepness = np.sqrt(dx**2 + dy**2)
+    base_steepness = (base_steepness - base_steepness.min()) / (base_steepness.max() - base_steepness.min())
+    
+    # 3. Add Semi-Random Ruggedness
+    # We create a separate high-frequency noise map for "rocks"
+    rugged_noise = np.random.rand(size, size)
+    rugged_noise = gaussian_filter(rugged_noise, sigma=1) # Sigma 1 = very sharp/jagged
+    
+    # 4. Blend them (70% natural slope, 30% random ruggedness)
+    steepness = (base_steepness * 0.7) + (rugged_noise * 0.3)
+    flow_map = np.zeros((size, size, 2), dtype=int)
+    for i in range(size):
+        for j in range(size):
+            y_min, y_max = max(0, i-1), min(size, i+2)
+            x_min, x_max = max(0, j-1), min(size, j+2)
+            neighborhood = elevation[y_min:y_max, x_min:x_max]
+            local_y, local_x = np.unravel_index(np.argmin(neighborhood), neighborhood.shape)
+            flow_map[i, j] = [y_min + local_y, x_min + local_x]
+            
+    water_mask = elevation < np.percentile(elevation, 12)
+    return elevation, steepness, water_mask, flow_map
+
+ELEV, STEEP, WATER_MAP, FLOW = generate_world(SIZE)
+grid = np.zeros((SIZE, SIZE))
+species_grid = np.random.randint(0, len(SPECIES_LIST), size=(SIZE, SIZE))
+# Initial Seeding
+for i in range(SIZE):
+    for j in range(SIZE):
+        if WATER_MAP[i, j]: grid[i, j] = WATER
+        else:
+            spec = SPECIES_LIST[species_grid[i, j]]
+            if spec.preferred_elev[0] <= ELEV[i, j] <= spec.preferred_elev[1]:
+                if np.random.random() < 0.3:
+                    grid[i, j] = np.random.randint(1, spec.max_height + 1)
+
+rain_history = 0.2 * (np.sin(2 * np.pi * np.arange(DAYS) / DAYS)) + 0.6
+
+def get_tree_points(tree_grid):
+    ys, xs = np.where(tree_grid > EMPTY)
+    if len(xs) == 0:
+        return [], [], [], [], []
+
+    zs = []
+    point_colors = []
+    point_sizes = []
+    for y, x in zip(ys, xs):
+        state = tree_grid[y, x]
+        spec = SPECIES_LIST[species_grid[y, x]]
+        zs.append(ELEV[y, x] + (state * TREE_HEIGHT_SCALE))
+        point_colors.append(spec.color)
+
+        if state >= spec.max_height:
+            point_sizes.append(18)
+        elif state == 1:
+            point_sizes.append(8)
+        else:
+            point_sizes.append(12)
+
+    return xs, ys, zs, point_colors, point_sizes
+
+# --- 2. VISUALIZATION SETUP (4 PANELS) ---
+fig = plt.figure(figsize=(15, 10))
+gs = fig.add_gridspec(2, 4)
+
+# Main Simulation
+ax_sim = fig.add_subplot(gs[:, :2])
+colors = ['#1f77b4', '#d2b48c', '#90ee90', '#32cd32', '#006400']
+img = ax_sim.imshow(grid, cmap=ListedColormap(colors), vmin=-1, vmax=3)
+ax_sim.set_title("Live Forest Succession")
+
+# Elevation
+ax_elev = fig.add_subplot(gs[0, 2])
+ax_elev.imshow(ELEV, cmap='terrain')
+ax_elev.set_title("Topography")
+ax_elev.axis('off')
+
+# Rain Rate
+ax_rain = fig.add_subplot(gs[1, 2])
+ax_rain.plot(rain_history, color='blue', alpha=0.3)
+rain_marker, = ax_rain.plot([], [], 'ro')
+ax_rain.set_title("Seasonal Rain")
+ax_rain.set_ylim(0, 1.1)
+
+ax_bars = fig.add_subplot(gs[:, 3])
+names = [s.name for s in SPECIES_LIST]
+bar_colors = [s.color for s in SPECIES_LIST]
+bars = ax_bars.bar(names, [0]*len(names), color=bar_colors)
+ax_bars.set_title("Greek Tree Population")
+ax_bars.set_ylim(0, (SIZE*SIZE)//5) 
+plt.setp(ax_bars.get_xticklabels(), rotation=45, ha="right") # Rotate names for clarity
+stats_text = ax_sim.text(0.02, 0.95, '', transform=ax_sim.transAxes, color='white', 
+                         fontweight='bold', bbox=dict(facecolor='black', alpha=0.6))
+
+# Separate 3D terrain video
+fig_3d = plt.figure(figsize=(10, 8))
+ax_3d = fig_3d.add_subplot(111, projection='3d')
+x_grid, y_grid = np.meshgrid(np.arange(SIZE), np.arange(SIZE))
+ax_3d.plot_surface(x_grid, y_grid, ELEV, cmap='terrain', alpha=0.55,
+                   linewidth=0, antialiased=False)
+tree_x, tree_y, tree_z, tree_colors, tree_sizes = get_tree_points(grid)
+tree_scatter = ax_3d.scatter(tree_x, tree_y, tree_z, c=tree_colors, s=tree_sizes,
+                             depthshade=True)
+ax_3d.set_title("3D Terrain: Tree Species")
+ax_3d.set_xlim(0, SIZE - 1)
+ax_3d.set_ylim(0, SIZE - 1)
+ax_3d.set_zlim(0, 1 + (max(s.max_height for s in SPECIES_LIST) * TREE_HEIGHT_SCALE))
+ax_3d.set_xlabel("X")
+ax_3d.set_ylabel("Y")
+ax_3d.set_zlabel("Elevation")
+ax_3d.view_init(elev=35, azim=-60)
+ax_3d.legend(handles=[
+    mpatches.Patch(color=spec.color, label=spec.name)
+    for spec in SPECIES_LIST
+], loc="upper right")
+
+# --- 3. ANIMATION ENGINE ---
+def update(frame, img, grid, stats_text):
+    global tree_scatter
+
+    new_grid = grid.copy()
+    current_rain = rain_history[frame]
+    rain_marker.set_data([frame], [current_rain])
+    
+    # Runoff
+    moisture = np.full((SIZE, SIZE), current_rain)
+    for i in range(SIZE):
+        for j in range(SIZE):
+            if STEEP[i, j] > 0.15:
+                ty, tx = FLOW[i, j]; m_t = current_rain * 0.5 * STEEP[i, j]
+                moisture[i, j] -= m_t; moisture[ty, tx] += m_t
+
+    # Evolution
+    mature_counts = [0] * len(SPECIES_LIST)
+    for i in range(SIZE):
+        for j in range(SIZE):
+            if grid[i, j] == WATER: continue
+            state = grid[i, j]; s_idx = species_grid[i, j]; spec = SPECIES_LIST[s_idx]
+            m, alt = moisture[i, j], ELEV[i, j]
+            
+            if state == EMPTY:
+                if spec.preferred_elev[0] <= alt <= spec.preferred_elev[1]:
+                    r = spec.seed_range
+                    ys, ye = max(0, i-r), min(SIZE, i+r+1); xs, xe = max(0, j-r), min(SIZE, j+r+1)
+                    if np.any((grid[ys:ye, xs:xe] == spec.max_height) & (species_grid[ys:ye, xs:xe] == s_idx)):
+                        if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1
+            elif state > EMPTY:
+                if state == spec.max_height:
+                    # Mature trees can only die from thirst.
+                    death_p = DROUGHT_DEATH_CHANCE if m < spec.water_need else 0.0
+                else:
+                    death_p = 0.005 + (alt * 0.01)
+                    if m < spec.water_need: death_p += DROUGHT_DEATH_CHANCE
+
+                if np.random.random() < death_p: new_grid[i, j] = EMPTY
+                elif state < spec.max_height:
+                    if np.random.random() < spec.growth_rate: new_grid[i, j] += 1
+            
+            # Count mature trees for the bar chart
+            if new_grid[i, j] == spec.max_height:
+                mature_counts[s_idx] += 1
+
+    # Update Bar Chart
+    for bar, count in zip(bars, mature_counts):
+        bar.set_height(count)
+        
+    stats_text.set_text(f"Day: {frame} | Rain: {current_rain:.2f}")
+    img.set_data(new_grid)
+    tree_scatter.remove()
+    tree_x, tree_y, tree_z, tree_colors, tree_sizes = get_tree_points(new_grid)
+    tree_scatter = ax_3d.scatter(tree_x, tree_y, tree_z, c=tree_colors, s=tree_sizes,
+                                 depthshade=True)
+    ax_3d.view_init(elev=35, azim=-60 + (frame * 0.35))
+    fig_3d.canvas.draw_idle()
+
+    grid[:] = new_grid[:]
+    return img, stats_text, rain_marker, tree_scatter, *bars
+
+plt.tight_layout()
+ani = animation.FuncAnimation(fig, update, fargs=(img, grid, stats_text), 
+                              frames=DAYS, interval=20, blit=False)
+plt.show()
