@@ -3,12 +3,12 @@ class TreeSpecies:
         self.name = name
         self.max_height = max_height
         self.growth_rate = growth_rate
-        self.water_need = water_need
-        self.preferred_elev = preferred_elev
-        self.seed_range = seed_range
+        self.water_need = water_need # water need for saplings
+        self.preferred_elev = preferred_elev #(altitude range as a fraction of max elevation)
+        self.seed_range = seed_range #pixel
         self.color = color
         self.current_height = 0
-        self.water_need_for_grown_trees= water_need/2
+        self.water_need_for_grown_trees= water_need/2 #mature trees are more drought resistant
 
 # --- Greek Tree Species ---
 
