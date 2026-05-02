@@ -7,11 +7,11 @@ from scipy.ndimage import gaussian_filter
 from Objects import SPECIES_LIST
 
 # Configuration
-SIZE = 70 
+SIZE = 80
 DAYS = 365
 WATER, EMPTY = -1, 0
 DROUGHT_DEATH_CHANCE = 0.2
-TREE_HEIGHT_SCALE = 0.08
+TREE_HEIGHT_SCALE = 0.02
 
 # --- 1. WORLD GENERATION ---
 def generate_world(size):
@@ -46,18 +46,35 @@ def generate_world(size):
 
 ELEV, STEEP, WATER_MAP, FLOW = generate_world(SIZE)
 grid = np.zeros((SIZE, SIZE))
-species_grid = np.random.randint(0, len(SPECIES_LIST), size=(SIZE, SIZE))
+species_grid = np.zeros((SIZE, SIZE), dtype=int)
 # Initial Seeding
 for i in range(SIZE):
     for j in range(SIZE):
-        if WATER_MAP[i, j]: grid[i, j] = WATER
+        # 1. Identify Water Basins (Static check for day 0)
+        if ELEV[i, j] < np.percentile(ELEV, 7):
+            grid[i, j] = WATER
         else:
-            spec = SPECIES_LIST[species_grid[i, j]]
-            if spec.preferred_elev[0] <= ELEV[i, j] <= spec.preferred_elev[1]:
-                if np.random.random() < 0.3:
-                    grid[i, j] = np.random.randint(1, spec.max_height + 1)
+            # 2. Elevation Suitability: Find species that can actually grow here
+            valid_species = [
+                idx for idx, s in enumerate(SPECIES_LIST) 
+                if s.preferred_elev[0] <= ELEV[i, j] <= s.preferred_elev[1]
+            ]
+            
+            if valid_species:
+                s_idx = np.random.choice(valid_species)
+                species_grid[i, j] = s_idx
+                spec = SPECIES_LIST[s_idx]
+                
+                # 3. High Starting Density (80% coverage)
+                if np.random.random() < 0.8:
+                    # Plant trees based on their actual max height
+                    grid[i, j] = np.random.choice([spec.max_height - 1, spec.max_height], p=[0.3, 0.7])
+            else:
+                # Fallback if no species fits the elevation
+                species_grid[i, j] = np.random.randint(0, len(SPECIES_LIST))
 
-rain_history = 0.2 * (np.sin(2 * np.pi * np.arange(DAYS) / DAYS)) + 0.6
+rain_history = 0.25 * (np.sin(2*np.pi *np.arange(DAYS) / DAYS+ np.pi/2)) + 0.25
+annual_soil_moisture = 0.3 + (0.27 * (np.sin(2*np.pi * np.arange(DAYS) / DAYS + np.pi/2)) + 0.3)
 
 def get_tree_points(tree_grid):
     ys, xs = np.where(tree_grid > EMPTY)
@@ -70,12 +87,13 @@ def get_tree_points(tree_grid):
     for y, x in zip(ys, xs):
         state = tree_grid[y, x]
         spec = SPECIES_LIST[species_grid[y, x]]
-        zs.append(ELEV[y, x] + (state * TREE_HEIGHT_SCALE))
+        spec.current_height = state
+        zs.append(ELEV[y, x] + (spec.current_height * TREE_HEIGHT_SCALE))
         point_colors.append(spec.color)
 
-        if state >= spec.max_height:
+        if spec.current_height >= spec.max_height:
             point_sizes.append(18)
-        elif state == 1:
+        elif spec.current_height == 1:
             point_sizes.append(8)
         else:
             point_sizes.append(12)
@@ -144,9 +162,11 @@ def update(frame, img, grid, stats_text):
     new_grid = grid.copy()
     current_rain = rain_history[frame]
     rain_marker.set_data([frame], [current_rain])
-    
+    # for now asuming soil moisture retainance thought the yearr is constant 
+    # soil_moisture = 0.03 to 0.3
+    current_soil_moisture = annual_soil_moisture[frame]
     # Runoff
-    moisture = np.full((SIZE, SIZE), current_rain)
+    moisture = np.full((SIZE, SIZE), current_rain + current_soil_moisture, dtype=float)
     for i in range(SIZE):
         for j in range(SIZE):
             if STEEP[i, j] > 0.15:
@@ -159,25 +179,26 @@ def update(frame, img, grid, stats_text):
         for j in range(SIZE):
             if grid[i, j] == WATER: continue
             state = grid[i, j]; s_idx = species_grid[i, j]; spec = SPECIES_LIST[s_idx]
+            spec.current_height = state
             m, alt = moisture[i, j], ELEV[i, j]
             
-            if state == EMPTY:
+            if spec.current_height == EMPTY:
                 if spec.preferred_elev[0] <= alt <= spec.preferred_elev[1]:
                     r = spec.seed_range
                     ys, ye = max(0, i-r), min(SIZE, i+r+1); xs, xe = max(0, j-r), min(SIZE, j+r+1)
                     if np.any((grid[ys:ye, xs:xe] == spec.max_height) & (species_grid[ys:ye, xs:xe] == s_idx)):
-                        if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1
-            elif state > EMPTY:
-                if state == spec.max_height:
+                        if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1 #
+            elif spec.current_height > EMPTY:
+                if spec.max_height-1 < spec.current_height <= spec.max_height:
                     # Mature trees can only die from thirst.
-                    death_p = DROUGHT_DEATH_CHANCE if m < spec.water_need else 0.0
+                    death_p = DROUGHT_DEATH_CHANCE if m < spec.water_need_for_grown_trees else 0.0
                 else:
                     death_p = 0.005 + (alt * 0.01)
                     if m < spec.water_need: death_p += DROUGHT_DEATH_CHANCE
 
                 if np.random.random() < death_p: new_grid[i, j] = EMPTY
-                elif state < spec.max_height:
-                    if np.random.random() < spec.growth_rate: new_grid[i, j] += 1
+                elif spec.current_height < spec.max_height:
+                    if np.random.random() < spec.current_height * spec.growth_rate: new_grid[i, j] += spec.growth_rate
             
             # Count mature trees for the bar chart
             if new_grid[i, j] == spec.max_height:
