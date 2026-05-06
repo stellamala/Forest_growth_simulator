@@ -7,12 +7,12 @@ from scipy.ndimage import gaussian_filter
 from Objects import SPECIES_LIST
 
 # Configuration
-SIZE = 80
-DAYS = 365
-WATER, EMPTY = -1, 0
+SIZE = 50
+DAYS = 365*10
+WATER, EMPTY = -1, 0  # Water is -1, empty land is 0, tree heights start from 1 upwards
 DROUGHT_DEATH_CHANCE = 0.2
 TREE_HEIGHT_SCALE = 0.02
-
+current_year = 0
 # --- 1. WORLD GENERATION ---
 def generate_world(size):
     # 1. Base Elevation
@@ -31,7 +31,7 @@ def generate_world(size):
     rugged_noise = gaussian_filter(rugged_noise, sigma=1) # Sigma 1 = very sharp/jagged
     
     # 4. Blend them (70% natural slope, 30% random ruggedness)
-    steepness = (base_steepness * 0.7) + (rugged_noise * 0.3)
+    steepness = (base_steepness * 0.4) + (rugged_noise * 0.6)
     flow_map = np.zeros((size, size, 2), dtype=int)
     for i in range(size):
         for j in range(size):
@@ -41,13 +41,13 @@ def generate_world(size):
             local_y, local_x = np.unravel_index(np.argmin(neighborhood), neighborhood.shape)
             flow_map[i, j] = [y_min + local_y, x_min + local_x]
             
-    water_mask = elevation < np.percentile(elevation, 12)
+    water_mask = elevation < np.percentile(elevation, 2) # We set water at the lowest 2% of elevations to create more lakes and rivers, which are crucial for a thriving forest ecosystem.
     return elevation, steepness, water_mask, flow_map
 
 ELEV, STEEP, WATER_MAP, FLOW = generate_world(SIZE)
 grid = np.zeros((SIZE, SIZE))
 species_grid = np.zeros((SIZE, SIZE), dtype=int)
-# Initial Seeding
+# Initial Seeding (populating the world with trees based on elevation suitability and water presence)
 for i in range(SIZE):
     for j in range(SIZE):
         # 1. Identify Water Basins (Static check for day 0)
@@ -66,9 +66,9 @@ for i in range(SIZE):
                 spec = SPECIES_LIST[s_idx]
                 
                 # 3. High Starting Density (80% coverage)
-                if np.random.random() < 0.8:
+                if np.random.random() < 0.2:
                     # Plant trees based on their actual max height
-                    grid[i, j] = np.random.choice([spec.max_height - 1, spec.max_height], p=[0.3, 0.7])
+                    grid[i, j] = np.random.choice([spec.max_height - 1, spec.max_height], p=[0.5, 0.5])
             else:
                 # Fallback if no species fits the elevation
                 species_grid[i, j] = np.random.randint(0, len(SPECIES_LIST))
@@ -154,24 +154,25 @@ ax_3d.legend(handles=[
     mpatches.Patch(color=spec.color, label=spec.name)
     for spec in SPECIES_LIST
 ], loc="upper right")
-
 # --- 3. ANIMATION ENGINE ---
 def update(frame, img, grid, stats_text):
     global tree_scatter
-
+    current_year = frame // 365
     new_grid = grid.copy()
     current_rain = rain_history[frame]
     rain_marker.set_data([frame], [current_rain])
-    # for now asuming soil moisture retainance thought the yearr is constant 
-    # soil_moisture = 0.03 to 0.3
     current_soil_moisture = annual_soil_moisture[frame]
+
+
     # Runoff
     moisture = np.full((SIZE, SIZE), current_rain + current_soil_moisture, dtype=float)
     for i in range(SIZE):
         for j in range(SIZE):
-            if STEEP[i, j] > 0.15:
-                ty, tx = FLOW[i, j]; m_t = current_rain * 0.5 * STEEP[i, j]
-                moisture[i, j] -= m_t; moisture[ty, tx] += m_t
+            if STEEP[i, j] > 0.15: #f a cell is relatively flat, the water stays put. If it’s steeper than the threshold, gravity takes over.
+                ty, tx = FLOW[i, j];  # Find the target cell where water flows
+                m_t = current_rain * 0.5 * STEEP[i, j] # The amount of water that moves is proportional to the rain and the steepness
+                moisture[i, j] -= m_t; # Remove water from the current cell
+                moisture[ty, tx] += m_t # Add it to the target cell
 
     # Evolution
     mature_counts = [0] * len(SPECIES_LIST)
@@ -182,12 +183,11 @@ def update(frame, img, grid, stats_text):
             spec.current_height = state
             m, alt = moisture[i, j], ELEV[i, j]
             
-            if spec.current_height == EMPTY:
-                if spec.preferred_elev[0] <= alt <= spec.preferred_elev[1]:
-                    r = spec.seed_range
-                    ys, ye = max(0, i-r), min(SIZE, i+r+1); xs, xe = max(0, j-r), min(SIZE, j+r+1)
-                    if np.any((grid[ys:ye, xs:xe] == spec.max_height) & (species_grid[ys:ye, xs:xe] == s_idx)):
-                        if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1 #
+            if spec.current_height == EMPTY:        
+                r = spec.seed_range
+                ys, ye = max(0, i-r), min(SIZE, i+r+1); xs, xe = max(0, j-r), min(SIZE, j+r+1)
+                if np.any((grid[ys:ye, xs:xe] == spec.max_height) & (species_grid[ys:ye, xs:xe] == s_idx)):
+                    if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1 #
             elif spec.current_height > EMPTY:
                 if spec.max_height-1 < spec.current_height <= spec.max_height:
                     # Mature trees can only die from thirst.
@@ -208,13 +208,13 @@ def update(frame, img, grid, stats_text):
     for bar, count in zip(bars, mature_counts):
         bar.set_height(count)
         
-    stats_text.set_text(f"Day: {frame} | Rain: {current_rain:.2f}")
+    stats_text.set_text(f"Year: {current_year}| Day: {frame+1}/{DAYS} | Rain: {current_rain:.2f} | Rain (Year): {rain_history[frame]:.2f}")
     img.set_data(new_grid)
     tree_scatter.remove()
     tree_x, tree_y, tree_z, tree_colors, tree_sizes = get_tree_points(new_grid)
     tree_scatter = ax_3d.scatter(tree_x, tree_y, tree_z, c=tree_colors, s=tree_sizes,
                                  depthshade=True)
-    ax_3d.view_init(elev=35, azim=-60 + (frame * 0.35))
+    ax_3d.view_init(elev=35, azim=-60+(frame*0.5)) # Slowly rotate the 3D view for better visualization
     fig_3d.canvas.draw_idle()
 
     grid[:] = new_grid[:]
@@ -222,5 +222,5 @@ def update(frame, img, grid, stats_text):
 
 plt.tight_layout()
 ani = animation.FuncAnimation(fig, update, fargs=(img, grid, stats_text), 
-                              frames=DAYS, interval=20, blit=False)
+                              frames=DAYS, interval=1, blit=False)
 plt.show()
