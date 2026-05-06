@@ -73,8 +73,10 @@ for i in range(SIZE):
                 # Fallback if no species fits the elevation
                 species_grid[i, j] = np.random.randint(0, len(SPECIES_LIST))
 
-rain_history = 0.25 * (np.sin(2*np.pi *np.arange(DAYS) / DAYS+ np.pi/2)) + 0.25
-annual_soil_moisture = 0.3 + (0.27 * (np.sin(2*np.pi * np.arange(DAYS) / DAYS + np.pi/2)) + 0.3)
+yearly_cycle = (np.arange(DAYS) % 365) / 365
+# 3. Plug that cycle into your original formulas
+rain_history = 0.25 * (np.sin(2 * np.pi * yearly_cycle + np.pi/2)) + 0.25
+annual_soil_moisture = 0.3 + (0.27 * (np.sin(2 * np.pi * yearly_cycle + np.pi/2)) + 0.3)
 
 def get_tree_points(tree_grid):
     ys, xs = np.where(tree_grid > EMPTY)
