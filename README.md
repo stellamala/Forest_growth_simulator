@@ -55,7 +55,7 @@ The simulation follows a daily cycle where every tree's life is decided based on
 
 ## Growth and Maturity
 A tree starts as a **seedling** (Height = 1) and tries to reach its **max height**. 
-* Every day, a tree has a chance to grow by 1 meter based on its **growth rate**.
+* Every day, a tree has a chance to grow by 1 * grouth rate based on its **growth rate**.
 * Once a tree reaches its max height, it is considered **Mature**.
 
 ## Survival and Death
