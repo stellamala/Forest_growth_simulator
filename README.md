@@ -55,7 +55,7 @@ The simulation follows a daily cycle where every tree's life is decided based on
 
 ## Growth and Maturity
 A tree starts as a **seedling** (Height = 1) and tries to reach its **max height**. 
-* Every day, a tree has a chance to grow by 1 meter based on its **growth rate**.
+* Every day, a tree has a chance to grow by 1 * grouth rate based on its **growth rate**.
 * Once a tree reaches its max height, it is considered **Mature**.
 
 ## Survival and Death
@@ -63,6 +63,7 @@ The primary cause of death in this simulation is **thirst**.
 * **Growing trees** (Height < max) are fragile. They need the full **water need** amount to survive. If the supply is lower, they have a high chance of dying.
 * **Grown trees** (Height = max) are more resistant. They only need the **water need for grown trees** (half the original amount) to survive.
 * If a tree dies, the pixel returns to **EMPTY** soil, allowing new seeds to take its place.
+
 
 ## Seed Dispersal (Reproduction)
 Only **Mature** trees can reproduce. 
