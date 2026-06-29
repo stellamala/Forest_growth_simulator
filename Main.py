@@ -127,8 +127,10 @@ ax_rain.set_ylim(0, 1.1)
 
 ax_bars = fig.add_subplot(gs[:, 3])
 names = [s.name for s in SPECIES_LIST]
-bar_colors = [s.color for s in SPECIES_LIST]
-bars = ax_bars.bar(names, [0]*len(names), color=bar_colors)
+bottom_colors = [s.color for s in SPECIES_LIST]
+bar_colors = [f"{s.color}90" for s in SPECIES_LIST]
+bottom_bars = ax_bars.bar(names, [0]*len(names), color=bottom_colors, label='Mature Trees')
+top_bars = ax_bars.bar(names, [0]*len(names), color=bar_colors , label='Allnon mature trees ')
 ax_bars.set_title("Greek Tree Population")
 ax_bars.set_ylim(0, (SIZE*SIZE)//5) 
 plt.setp(ax_bars.get_xticklabels(), rotation=45, ha="right") # Rotate names for clarity
@@ -178,6 +180,7 @@ def update(frame, img, grid, stats_text):
 
     # Evolution
     mature_counts = [0] * len(SPECIES_LIST)
+    spec_count = [0] * len(SPECIES_LIST)  # Count all trees per species
     for i in range(SIZE):
         for j in range(SIZE):
             if grid[i, j] == WATER: continue
@@ -191,6 +194,7 @@ def update(frame, img, grid, stats_text):
                 if np.any((grid[ys:ye, xs:xe] == spec.max_height) & (species_grid[ys:ye, xs:xe] == s_idx)):
                     if np.random.random() < (spec.growth_rate * m): new_grid[i, j] = 1 #
             elif spec.current_height > EMPTY:
+                spec_count[s_idx] += 1 #count all trees for the bar chart
                 if spec.max_height-1 < spec.current_height <= spec.max_height:
                     # Mature trees can only die from thirst.
                     death_p = DROUGHT_DEATH_CHANCE if m < spec.water_need_for_grown_trees else 0.0
@@ -205,11 +209,18 @@ def update(frame, img, grid, stats_text):
             # Count mature trees for the bar chart
             if new_grid[i, j] == spec.max_height:
                 mature_counts[s_idx] += 1
+                            
 
     # Update Bar Chart
-    for bar, count in zip(bars, mature_counts):
-        bar.set_height(count)
+    for top_bar, bottom_bar, total, adult in zip(top_bars, bottom_bars, spec_count, mature_counts):
         
+        # 1. Update the bottom layer (Adults)
+        bottom_bar.set_height(adult)
+        
+        # 2. Update the top layer (Total - Adults)
+        top_bar.set_height(total - adult)
+        top_bar.set_y(adult) # Stack the top bar exactly on top of the adult bar
+            
     stats_text.set_text(f"Year: {current_year}| Day: {frame+1}/{DAYS} | Rain: {current_rain:.2f} | Rain (Year): {rain_history[frame]:.2f}")
     img.set_data(new_grid)
     tree_scatter.remove()
@@ -220,7 +231,8 @@ def update(frame, img, grid, stats_text):
     fig_3d.canvas.draw_idle()
 
     grid[:] = new_grid[:]
-    return img, stats_text, rain_marker, tree_scatter, *bars
+    return img, stats_text, rain_marker, tree_scatter, *top_bars, *bottom_bars
+
 
 plt.tight_layout()
 ani = animation.FuncAnimation(fig, update, fargs=(img, grid, stats_text), 
